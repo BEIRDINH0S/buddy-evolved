@@ -231,34 +231,42 @@ function render(state) {
 const SIDEBAR_W = 24; // largeur totale du panneau
 
 /**
- * Détecte si on peut dessiner sur le côté via /dev/tty.
- * Sur Windows PowerShell : false (Claude Code capture stdout ET stderr).
- * Sur macOS / Linux / WSL / Git Bash : true.
+ * Chemins d'accès direct au terminal, dans l'ordre de priorité :
+ *   /dev/tty     — Unix / macOS / WSL / Git Bash
+ *   \\.\CONOUT$  — Windows PowerShell / CMD (device console natif,
+ *                  bypasse les pipes → écrit directement dans Windows Terminal)
+ */
+const TTY_CANDIDATES = ['/dev/tty', '\\\\.\\CONOUT$'];
+
+/**
+ * Retourne true si on peut écrire directement sur le terminal.
  */
 function canSidebar() {
-  try {
-    const fd = fs.openSync('/dev/tty', 'w');
-    fs.closeSync(fd);
-    return true;
-  } catch {
-    return false;
+  for (const p of TTY_CANDIDATES) {
+    try {
+      const fd = fs.openSync(p, 'w');
+      fs.closeSync(fd);
+      return true;
+    } catch {}
   }
+  return false;
 }
 
 /**
- * Ouvre /dev/tty (Unix/WSL) en accès direct.
+ * Ouvre le premier accès terminal disponible.
  * Retourne { write(str), end() } ou null.
  */
 function openTTY() {
-  try {
-    const fd = fs.openSync('/dev/tty', 'w');
-    return {
-      write: (str) => { try { fs.writeSync(fd, str); } catch {} },
-      end:   ()    => { try { fs.closeSync(fd);       } catch {} },
-    };
-  } catch {
-    return null;
+  for (const p of TTY_CANDIDATES) {
+    try {
+      const fd = fs.openSync(p, 'w');
+      return {
+        write: (str) => { try { fs.writeSync(fd, str); } catch {} },
+        end:   ()    => { try { fs.closeSync(fd);       } catch {} },
+      };
+    } catch {}
   }
+  return null;
 }
 
 /**
