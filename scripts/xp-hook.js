@@ -4,7 +4,7 @@
  *
  * Appelé par Claude Code via hooks.json.
  * Reçoit l'event en JSON sur stdin, accorde de l'XP, met à jour le state.
- * Dessine le pet directement sur le terminal via /dev/tty ou CONOUT$.
+ * Le pet s'affiche en continu via le statusLine (statusline.js).
  * Doit être RAPIDE (< 500ms) — pas de réseau, pas de calcul lourd.
  *
  * Usage:
@@ -16,13 +16,10 @@
 'use strict';
 
 const { loadState, saveState, appendLog, addXp, isMaxLevel, level,
-        XP_TABLE, XP_SESSION_END,
-        drawSidebar, canSidebar, renderInline } = require('./core.js');
+        XP_TABLE, XP_SESSION_END } = require('./core.js');
 
-const USE_SIDEBAR = canSidebar();
-
-const argv        = process.argv;
-const isStop      = argv.includes('--event=stop');
+const argv           = process.argv;
+const isStop         = argv.includes('--event=stop');
 const isSessionStart = argv.includes('--event=session-start');
 
 let raw = '';
@@ -31,7 +28,7 @@ process.stdin.on('data', chunk => { raw += chunk; });
 process.stdin.on('end', () => {
   try {
     run(raw);
-  } catch (e) {
+  } catch {
     // Silencieux — un hook qui plante ne doit pas bloquer Claude Code
     process.exit(0);
   }
@@ -41,13 +38,17 @@ function run(raw) {
   let event = {};
   try { event = JSON.parse(raw || '{}'); } catch {}
 
-  const state = loadState();
-
   if (isSessionStart) {
-    if (USE_SIDEBAR) drawSidebar(state);
-    // Sur Windows : pas d'affichage au SessionStart (trop verbeux)
+    // Incrémente le compteur de sessions sans toucher à l'XP
+    const state = loadState();
+    state.totalSessions = (state.totalSessions || 0) + 1;
+    state.lastSessionAt = Date.now();
+    saveState(state);
+    appendLog({ event: 'session_start' });
     return;
   }
+
+  const state = loadState();
 
   if (isStop) {
     handleStop(state, event);
@@ -59,34 +60,26 @@ function run(raw) {
 function handleToolUse(state, event) {
   const toolName = event.tool_name || '';
   const xpAmount = XP_TABLE[toolName] ?? 0;
-  if (xpAmount === 0) return; // outil pas suivi → on sort vite
+  if (xpAmount === 0) return;
 
   const { state: updated, leveled, newLevel } = addXp(state, xpAmount);
 
   appendLog({ event: 'tool_use', tool: toolName, xp: xpAmount, level: newLevel });
   saveState(updated);
 
-  if (USE_SIDEBAR) {
-    drawSidebar(updated);
-  } else if (leveled) {
+  if (leveled) {
     printLevelUp(newLevel, isMaxLevel(updated.xp));
   }
 }
 
 function handleStop(state, event) {
   const { state: updated, leveled, newLevel } = addXp(state, XP_SESSION_END);
-  updated.totalSessions += 1;
-  updated.lastSessionAt  = Date.now();
 
   appendLog({ event: 'session_end', xp: XP_SESSION_END, level: newLevel });
   saveState(updated);
 
-  if (USE_SIDEBAR) {
-    drawSidebar(updated);
-  } else if (leveled) {
+  if (leveled) {
     printLevelUp(newLevel, isMaxLevel(updated.xp));
-  } else {
-    process.stdout.write(renderInline(updated));
   }
 }
 
