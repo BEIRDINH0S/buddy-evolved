@@ -231,43 +231,34 @@ function render(state) {
 const SIDEBAR_W = 24; // largeur totale du panneau
 
 /**
- * Ouvre un accès direct au terminal en contournant stdout pipé.
- * Ordre de priorité :
- *   1. process.stderr  — dans Claude Code, stderr va directement au terminal
- *   2. /dev/tty        — Unix / WSL / Git Bash
- *   3. \\.\CONOUT$     — Windows natif (PowerShell, CMD)
- * Retourne un objet { write(str), end() } ou null.
+ * Détecte si on peut dessiner sur le côté via /dev/tty.
+ * Sur Windows PowerShell : false (Claude Code capture stdout ET stderr).
+ * Sur macOS / Linux / WSL / Git Bash : true.
+ */
+function canSidebar() {
+  try {
+    const fd = fs.openSync('/dev/tty', 'w');
+    fs.closeSync(fd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ouvre /dev/tty (Unix/WSL) en accès direct.
+ * Retourne { write(str), end() } ou null.
  */
 function openTTY() {
-  // 1. stderr : dans les hooks Claude Code, stderr n'est pas capturé
-  //    et va directement au terminal, même sur Windows PowerShell.
-  //    On vérifie juste qu'on a un accès (writable + pas déjà fermé).
   try {
-    if (process.stderr && !process.stderr.destroyed) {
-      // Test rapide : écrire une chaîne vide pour voir si ça ne lève pas
-      process.stderr.write('');
-      return {
-        write: (str) => { try { process.stderr.write(str); } catch {} },
-        end:   ()    => {},
-      };
-    }
-  } catch {}
-
-  // 2. /dev/tty — Unix / WSL / Git Bash
-  // 3. \\.\CONOUT$ — Windows natif
-  const candidates = process.platform === 'win32'
-    ? ['\\\\.\\CONOUT$', '/dev/tty']
-    : ['/dev/tty'];
-  for (const p of candidates) {
-    try {
-      const fd = fs.openSync(p, 'w');
-      return {
-        write: (str) => { try { fs.writeSync(fd, str); } catch {} },
-        end:   ()    => { try { fs.closeSync(fd);       } catch {} },
-      };
-    } catch {}
+    const fd = fs.openSync('/dev/tty', 'w');
+    return {
+      write: (str) => { try { fs.writeSync(fd, str); } catch {} },
+      end:   ()    => { try { fs.closeSync(fd);       } catch {} },
+    };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
@@ -367,6 +358,61 @@ function drawSidebar(state) {
   tty.end();
 }
 
+// ─── Inline compact (fallback Windows PowerShell) ─────────────────────────────
+
+/**
+ * Rendu inline compact sur une seule ligne.
+ * Utilisé quand /dev/tty n'est pas accessible (Windows PowerShell).
+ */
+function renderInline(state) {
+  const { xp, rebirths } = state;
+  const lvl  = level(xp);
+  const tier = getTier(rebirths);
+
+  const pct  = isMaxLevel(xp) ? 10 : Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 10);
+  const bar  = (isMaxLevel(xp) ? '\x1b[33m' : '\x1b[32m')
+             + '█'.repeat(pct) + RESET + '░'.repeat(10 - pct);
+
+  const tierStr  = tier ? `  ${tier.color}${tier.name}${RESET}` : '';
+  const rebStr   = rebirths > 0 ? `  ${tier ? tier.color : '\x1b[90m'}${'★'.repeat(Math.min(rebirths, 8))}${RESET}` : '';
+  const rebExtra = rebirths > 8 ? `+${rebirths - 8}` : '';
+
+  if (isMaxLevel(xp)) {
+    return `  \x1b[1mBuddy\x1b[0m${tierStr}${rebStr}${rebExtra}  Lv.\x1b[1m${lvl}\x1b[0m  \x1b[33m✨ REBIRTH — /buddy rebirth\x1b[0m\n`;
+  }
+  return `  \x1b[1mBuddy\x1b[0m${tierStr}${rebStr}${rebExtra}  Lv.\x1b[1m${lvl}\x1b[0m  [${bar}]  ${xpInLevel(xp)}xp\n`;
+}
+
+/**
+ * Rendu inline pour /buddy (bloc compact dans la conversation).
+ */
+function renderInlineBlock(state) {
+  const { xp, rebirths } = state;
+  const lvl  = level(xp);
+  const tier = getTier(rebirths);
+
+  const pct  = isMaxLevel(xp) ? 20 : Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 20);
+  const bar  = (isMaxLevel(xp) ? '\x1b[33m' : '\x1b[32m')
+             + '█'.repeat(pct) + RESET + '░'.repeat(20 - pct);
+
+  const tierStr = tier ? ` · ${tier.color}${tier.name}${RESET}` : '';
+  const { topRows, botRows } = buildStarLayout(rebirths, tier);
+
+  const lines = [
+    '',
+    ...topRows.map(r => `  ${r}`),
+    ...PET_LINES.map(l => `  ${l}`),
+    ...botRows.map(r => `  ${r}`),
+    '',
+    `  \x1b[1mBuddy\x1b[0m  ·  Lv.\x1b[1m${lvl}\x1b[0m${tierStr}`,
+    `  [${bar}]  ${xpInLevel(xp)}/${XP_PER_LEVEL} xp`,
+    '',
+    ...(isMaxLevel(xp) ? [`  \x1b[33m✨ REBIRTH — /buddy rebirth\x1b[0m`, ''] : []),
+  ];
+
+  return lines.join('\n');
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -374,5 +420,6 @@ module.exports = {
   XP_TABLE, XP_SESSION_END, MAX_LEVEL,
   loadState, saveState, appendLog,
   level, xpInLevel, isMaxLevel, addXp,
-  getTier, render, drawSidebar,
+  getTier, render, drawSidebar, canSidebar,
+  renderInline, renderInlineBlock,
 };

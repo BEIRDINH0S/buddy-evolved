@@ -16,7 +16,10 @@
 'use strict';
 
 const { loadState, saveState, appendLog, addXp, isMaxLevel, level,
-        XP_TABLE, XP_SESSION_END, drawSidebar } = require('./core.js');
+        XP_TABLE, XP_SESSION_END,
+        drawSidebar, canSidebar, renderInline } = require('./core.js');
+
+const USE_SIDEBAR = canSidebar();
 
 const argv        = process.argv;
 const isStop      = argv.includes('--event=stop');
@@ -41,8 +44,8 @@ function run(raw) {
   const state = loadState();
 
   if (isSessionStart) {
-    // Juste redessiner le pet au démarrage de session, sans XP
-    drawSidebar(state);
+    if (USE_SIDEBAR) drawSidebar(state);
+    // Sur Windows : pas d'affichage au SessionStart (trop verbeux)
     return;
   }
 
@@ -62,9 +65,10 @@ function handleToolUse(state, event) {
 
   appendLog({ event: 'tool_use', tool: toolName, xp: xpAmount, level: newLevel });
   saveState(updated);
-  drawSidebar(updated); // redessine le pet sur le côté droit
 
-  if (leveled) {
+  if (USE_SIDEBAR) {
+    drawSidebar(updated);
+  } else if (leveled) {
     printLevelUp(newLevel, isMaxLevel(updated.xp));
   }
 }
@@ -76,10 +80,13 @@ function handleStop(state, event) {
 
   appendLog({ event: 'session_end', xp: XP_SESSION_END, level: newLevel });
   saveState(updated);
-  drawSidebar(updated); // redessine le pet sur le côté droit
 
-  if (leveled) {
+  if (USE_SIDEBAR) {
+    drawSidebar(updated);
+  } else if (leveled) {
     printLevelUp(newLevel, isMaxLevel(updated.xp));
+  } else {
+    process.stdout.write(renderInline(updated));
   }
 }
 
