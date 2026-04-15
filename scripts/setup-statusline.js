@@ -47,7 +47,7 @@ function setup() {
   // Déjà configuré correctement → rien à faire
   if (settings.statusLine?.command === cmd) return false;
 
-  settings.statusLine = { type: 'command', command: cmd };
+  settings.statusLine = { type: 'command', command: cmd, refreshInterval: 1 };
 
   fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
