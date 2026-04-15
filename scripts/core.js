@@ -226,6 +226,128 @@ function render(state) {
   return lines.join('\n');
 }
 
+// ─── Sidebar (dessin direct sur le terminal) ──────────────────────────────────
+
+const SIDEBAR_W = 24; // largeur totale du panneau
+
+/**
+ * Ouvre un file descriptor direct vers le terminal (sync).
+ * Contourne stdout pipé. Fonctionne sur macOS, Linux, WSL et Windows natif.
+ * Retourne un objet { write(str), end() } ou null si pas de TTY dispo.
+ */
+function openTTY() {
+  const candidates = process.platform === 'win32'
+    ? ['\\\\.\\CONOUT$', '/dev/tty', '/dev/stderr']
+    : ['/dev/tty', '/dev/stderr'];
+  for (const p of candidates) {
+    try {
+      const fd = fs.openSync(p, 'w');
+      return {
+        write: (str) => { try { fs.writeSync(fd, str); } catch {} },
+        end:   ()    => { try { fs.closeSync(fd);       } catch {} },
+      };
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Retourne la largeur du terminal (avec fallbacks successifs).
+ */
+function termCols() {
+  return process.stdout.columns
+      || parseInt(process.env.COLUMNS || '')
+      || parseInt(process.env.TERM_WIDTH || '')
+      || 120;
+}
+
+/**
+ * Construit les lignes du panneau latéral (24 chars de large).
+ * Format compact : pet + barre XP + étoiles.
+ */
+function sidebarLines(state) {
+  const { xp, rebirths } = state;
+  const lvl  = level(xp);
+  const tier = getTier(rebirths);
+  const W    = SIDEBAR_W;
+
+  // Barre XP compacte (10 blocs)
+  const pct    = isMaxLevel(xp) ? 10 : Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 10);
+  const bar    = (isMaxLevel(xp) ? '\x1b[33m' : '\x1b[32m')
+               + '█'.repeat(pct) + RESET + '░'.repeat(10 - pct);
+
+  // Étoiles (max 2 lignes de 8)
+  const starLines = [];
+  if (rebirths > 0) {
+    const sym  = tier ? tier.symbol : '*';
+    const col  = tier ? (tier.color ?? RAINBOW[0]) : '\x1b[90m';
+    const star = `${col}${sym}${RESET}`;
+    const row1 = Math.min(rebirths, 8);
+    const row2 = Math.max(0, rebirths - 8);
+    starLines.push(Array.from({ length: row1 }, (_, i) => {
+      const c = tier?.color ?? RAINBOW[i % RAINBOW.length];
+      return `${c}${sym}${RESET}`;
+    }).join(' '));
+    if (row2 > 0) {
+      starLines.push(Array.from({ length: Math.min(row2, 8) }, (_, i) => {
+        const c = tier?.color ?? RAINBOW[(row1 + i) % RAINBOW.length];
+        return `${c}${sym}${RESET}`;
+      }).join(' '));
+    }
+  }
+
+  const tierName  = tier ? `${tier.color}${tier.name}${RESET}` : '';
+  const lvlStr    = `Lv.\x1b[1m${lvl}\x1b[0m`;
+  const rebStr    = rebirths > 0 ? ` ·${rebirths}✦` : '';
+
+  const lines = [
+    `╭${'─'.repeat(W - 2)}╮`,
+    `│\x1b[1m  Buddy\x1b[0m${rebStr.padEnd(W - 9)}│`,
+    `│${''.padEnd(W - 2)}│`,
+    ...PET_LINES.map(l => `│${l.padEnd(W - 2)}│`),
+    `│${''.padEnd(W - 2)}│`,
+    `│  ${lvlStr}${tierName ? '  ' + tierName : ''}${''.padEnd(0)}│`,
+    `│  [${bar}]${''.padEnd(0)}│`,
+    `│${''.padEnd(W - 2)}│`,
+    ...starLines.map(s => `│  ${s}${''.padEnd(0)}│`),
+    ...(isMaxLevel(xp) ? [`│  \x1b[33m✨ /buddy rebirth\x1b[0m  │`] : []),
+    `╰${'─'.repeat(W - 2)}╯`,
+  ];
+
+  return lines;
+}
+
+/**
+ * Dessine le pet dans le coin supérieur droit du terminal.
+ * Écrit directement sur /dev/tty (Unix) ou CONOUT$ (Windows)
+ * pour ne pas polluer stdout pipé de Claude Code.
+ */
+function drawSidebar(state) {
+  const cols = termCols();
+  if (cols < SIDEBAR_W + 10) return; // terminal trop étroit
+
+  const tty = openTTY();
+  if (!tty) return;
+
+  const startCol = cols - SIDEBAR_W + 1;
+  const lines    = sidebarLines(state);
+
+  let out = '';
+  out += '\x1b[s';    // save cursor
+  out += '\x1b[?7l';  // disable line wrap
+
+  lines.forEach((line, i) => {
+    out += `\x1b[${i + 1};${startCol}H`; // position absolue
+    out += line;
+  });
+
+  out += '\x1b[?7h';  // re-enable line wrap
+  out += '\x1b[u';    // restore cursor
+
+  tty.write(out);
+  tty.end();
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -233,5 +355,5 @@ module.exports = {
   XP_TABLE, XP_SESSION_END, MAX_LEVEL,
   loadState, saveState, appendLog,
   level, xpInLevel, isMaxLevel, addXp,
-  getTier, render,
+  getTier, render, drawSidebar,
 };
