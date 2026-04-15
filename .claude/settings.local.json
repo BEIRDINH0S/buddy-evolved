@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.jdhodges.com)",
+      "Bash(gh api:*)",
+      "Bash(node scripts/xp-hook.js)",
+      "Bash(node scripts/xp-hook.js --event=stop)",
+      "Bash(node scripts/display.js)",
+      "Bash(node -e ':*)",
+      "Bash(node scripts/rebirth.js)",
+      "Bash(node scripts/rebirth.js --confirm)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git remote:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(node -e \"console.log\\('cols:', process.stdout.columns, 'rows:', process.stdout.rows\\)\")"
+    ]
+  }
+}

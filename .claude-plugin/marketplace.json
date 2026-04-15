@@ -10,7 +10,7 @@
     {
       "name": "buddy-evolved",
       "source": "./",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "A terminal pet that levels up as you code. Rebirth for stars.",
       "license": "MIT",
       "keywords": ["pet", "tamagotchi", "xp", "gamification", "fun"]

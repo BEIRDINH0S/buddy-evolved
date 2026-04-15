@@ -231,14 +231,33 @@ function render(state) {
 const SIDEBAR_W = 24; // largeur totale du panneau
 
 /**
- * Ouvre un file descriptor direct vers le terminal (sync).
- * Contourne stdout pipé. Fonctionne sur macOS, Linux, WSL et Windows natif.
- * Retourne un objet { write(str), end() } ou null si pas de TTY dispo.
+ * Ouvre un accès direct au terminal en contournant stdout pipé.
+ * Ordre de priorité :
+ *   1. process.stderr  — dans Claude Code, stderr va directement au terminal
+ *   2. /dev/tty        — Unix / WSL / Git Bash
+ *   3. \\.\CONOUT$     — Windows natif (PowerShell, CMD)
+ * Retourne un objet { write(str), end() } ou null.
  */
 function openTTY() {
+  // 1. stderr : dans les hooks Claude Code, stderr n'est pas capturé
+  //    et va directement au terminal, même sur Windows PowerShell.
+  //    On vérifie juste qu'on a un accès (writable + pas déjà fermé).
+  try {
+    if (process.stderr && !process.stderr.destroyed) {
+      // Test rapide : écrire une chaîne vide pour voir si ça ne lève pas
+      process.stderr.write('');
+      return {
+        write: (str) => { try { process.stderr.write(str); } catch {} },
+        end:   ()    => {},
+      };
+    }
+  } catch {}
+
+  // 2. /dev/tty — Unix / WSL / Git Bash
+  // 3. \\.\CONOUT$ — Windows natif
   const candidates = process.platform === 'win32'
-    ? ['\\\\.\\CONOUT$', '/dev/tty', '/dev/stderr']
-    : ['/dev/tty', '/dev/stderr'];
+    ? ['\\\\.\\CONOUT$', '/dev/tty']
+    : ['/dev/tty'];
   for (const p of candidates) {
     try {
       const fd = fs.openSync(p, 'w');
