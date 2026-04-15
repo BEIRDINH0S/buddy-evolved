@@ -1,0 +1,19 @@
+{
+  "name": "buddy-evolved",
+  "owner": {
+    "name": "buddy-evolved"
+  },
+  "metadata": {
+    "description": "Your terminal pet. Grows with you, rebirths for glory."
+  },
+  "plugins": [
+    {
+      "name": "buddy-evolved",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "A terminal pet that levels up as you code. Rebirth for stars.",
+      "license": "MIT",
+      "keywords": ["pet", "tamagotchi", "xp", "gamification", "fun"]
+    }
+  ]
+}

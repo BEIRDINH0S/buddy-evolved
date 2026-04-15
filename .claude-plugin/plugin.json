@@ -1,0 +1,11 @@
+{
+  "name": "buddy-evolved",
+  "version": "0.1.0",
+  "description": "Your terminal pet. Grows with you, rebirths for glory.",
+  "author": {
+    "name": "buddy-evolved"
+  },
+  "repository": "https://github.com/toi/buddy-evolved",
+  "license": "MIT",
+  "keywords": ["pet", "tamagotchi", "xp", "gamification"]
+}
