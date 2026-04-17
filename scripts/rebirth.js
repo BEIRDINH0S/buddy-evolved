@@ -10,7 +10,7 @@
 'use strict';
 
 const { loadState, saveState, appendLog, render,
-        level, isMaxLevel, getTier, MAX_LEVEL } = require('./core.js');
+        level, isMaxLevel, getTier, MAX_LEVEL, RESET } = require('./core.js');
 
 const CONFIRM = process.argv.includes('--confirm');
 const state   = loadState();
@@ -91,12 +91,10 @@ function doRebirth(state) {
 
   saveState(state);
 
-  const tier = getTier(state.rebirths);
-  const tierAnnounce = tier
-    ? `\n  \x1b[1m${tier.color || ''}${tier.name.toUpperCase()}\x1b[0m — tes étoiles brillent maintenant différemment.`
-    : '';
+  const prevTier = getTier(prevRebirths);
+  const newTier  = getTier(state.rebirths);
 
-  process.stdout.write([
+  const lines = [
     '',
     '  ╔════════════════════════════════════╗',
    `  ║   ✨  REBIRTH #${String(state.rebirths).padEnd(20)}║`,
@@ -105,8 +103,20 @@ function doRebirth(state) {
     '  ║  Sa forme est préservée.           ║',
     '  ║  Une étoile s\'est ajoutée.        ║',
     '  ╚════════════════════════════════════╝',
-    tierAnnounce,
-    '',
-    render(state),
-  ].join('\n'));
+  ];
+
+  // Milestone tier
+  if (newTier && (!prevTier || newTier.name !== prevTier.name)) {
+    lines.push(
+      '',
+      `  ╔══════════════════════════════════╗`,
+      `  ║  ${newTier.color}★ ${newTier.name.toUpperCase()} TIER REACHED${RESET}           ║`,
+      `  ║  Tes étoiles brillent autrement. ║`,
+      `  ╚══════════════════════════════════╝`,
+    );
+  }
+
+  lines.push('', render(state));
+
+  process.stdout.write(lines.join('\n'));
 }

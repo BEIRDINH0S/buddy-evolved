@@ -5,9 +5,10 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const os   = require('os');
+const fs     = require('fs');
+const path   = require('path');
+const os     = require('os');
+const crypto = require('crypto');
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -18,18 +19,31 @@ const LOG_FILE   = path.join(DATA_DIR, 'log.jsonl');
 
 // ─── XP Config ────────────────────────────────────────────────────────────────
 
-const XP_PER_LEVEL = 100;   // linear: 100 XP par level
-const MAX_LEVEL    = 100;
+const MAX_LEVEL = 100;
+
+// XP nécessaire pour passer du level N au level N+1 (index 0 = level 1→2)
+const LEVEL_THRESHOLDS = [];
+for (let i = 0; i < 100; i++) {
+  if      (i < 10) LEVEL_THRESHOLDS.push(200);
+  else if (i < 25) LEVEL_THRESHOLDS.push(400);
+  else if (i < 50) LEVEL_THRESHOLDS.push(800);
+  else if (i < 75) LEVEL_THRESHOLDS.push(1500);
+  else             LEVEL_THRESHOLDS.push(3000);
+}
+
+// CUMULATIVE_XP[n] = XP total pour atteindre le level n+1
+const CUMULATIVE_XP = [0];
+for (let i = 0; i < 100; i++) CUMULATIVE_XP.push(CUMULATIVE_XP[i] + LEVEL_THRESHOLDS[i]);
 
 // XP granted by tool action (PostToolUse)
 const XP_TABLE = {
-  Write:      20,
-  Edit:       20,
-  MultiEdit:  25,
-  Bash:        5,
-  Agent:      15,  // spawning a subagent = work done
+  Write:     30,
+  Edit:      30,
+  MultiEdit: 40,
+  Bash:      10,
+  Agent:     25,
 };
-const XP_SESSION_END = 30;   // bonus à chaque Stop
+const XP_SESSION_END = 50;   // bonus à chaque Stop
 
 // ─── Star Tiers ───────────────────────────────────────────────────────────────
 
@@ -58,17 +72,49 @@ function colorStar(tier, index) {
   return `${color}${tier.symbol}${RESET}`;
 }
 
-// ─── Pet ASCII forms ──────────────────────────────────────────────────────────
-// Forme de base, sera étendue plus tard avec le système d'évolution visuelle
+// ─── Pet ASCII Forms ──────────────────────────────────────────────────────────
+// 4 espèces × 4 stades (level 1-24, 25-49, 50-74, 75+)
+// Chaque ligne fait exactement 7 chars
 
-const PET_LINES = [
-  '  .-.  ',
-  ' (o.o) ',
-  '  )|(  ',
-  ' (_|_) ',
+const PET_FORMS = [
+  // Espèce 0 — Classic
+  [
+    ['  .-.  ', ' (o.o) ', '  )|(  ', ' (_|_) '],
+    ['  .-.  ', ' (^.^) ', '  )o(  ', ' (_|_) '],
+    [' _.-._  '.slice(0,7), '(^. .^)', ' /)|(\\ ', ' (_|_) '],
+    [' ~.-._  '.slice(0,7), '(>. .<)', ' /)|(\\ ', '/(_|_)\\'],
+  ],
+  // Espèce 1 — Blob
+  [
+    [' (~~~) ', ' (o.o) ', '  ) (  ', ' (___) '],
+    [' (~~~) ', ' (^.^) ', '  ) (  ', ' (___) '],
+    [' (~*~) ', ' (^o^) ', '  \\ /  ', ' (___) '],
+    [' (*~*) ', ' (@o@) ', '  \\O/  ', ' (___) '],
+  ],
+  // Espèce 2 — Spike
+  [
+    [' /\\_/\\ ', ' (o.o) ', '  <|>  ', ' |\\_/| '],
+    [' /\\*/\\ ', ' (^.^) ', '  <|>  ', ' |\\_/| '],
+    [' /*\\*/ ', ' (^-^) ', ' /<|>\\ ', ' |/*\\| '],
+    [' /***\\ ', ' (@-@) ', ' /<*>\\ ', ' |/+\\| '],
+  ],
+  // Espèce 3 — Angel
+  [
+    ['  ~~~  ', ' (o.o) ', '  \\|/  ', '  /|\\  '],
+    ['  ~*~  ', ' (^.^) ', '  \\|/  ', '  /|\\  '],
+    ['  ~*~  ', ' (^v^) ', ' ~\\|/~ ', '  /|\\  '],
+    [' ~***~ ', ' (^v^) ', ' ~\\*/~ ', ' ~/|\\~ '],
+  ],
 ];
 
 const PET_WIDTH = 7; // largeur d'une ligne du pet
+
+function getPetLines(state) {
+  const species = (state.seed || 0) % 4;
+  const lvl     = level(state.xp);
+  const stage   = lvl < 25 ? 0 : lvl < 50 ? 1 : lvl < 75 ? 2 : 3;
+  return PET_FORMS[species][stage];
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -109,19 +155,33 @@ function saveState(state) {
 
 function appendLog(entry) {
   ensureDataDir();
-  fs.appendFileSync(LOG_FILE, JSON.stringify({ ts: Date.now(), ...entry }) + '\n');
+  const signed = signEntry({ ts: Date.now(), ...entry });
+  fs.appendFileSync(LOG_FILE, JSON.stringify(signed) + '\n');
 }
 
 // ─── XP / Level ───────────────────────────────────────────────────────────────
 
 function level(xp) {
-  return Math.min(Math.floor(xp / XP_PER_LEVEL), MAX_LEVEL);
+  // Cherche le level tel que CUMULATIVE_XP[level] <= xp < CUMULATIVE_XP[level+1]
+  let lvl = 0;
+  for (let i = 1; i <= MAX_LEVEL; i++) {
+    if (xp >= CUMULATIVE_XP[i]) lvl = i;
+    else break;
+  }
+  return Math.min(lvl + 1, MAX_LEVEL); // level 1-based
 }
 
 function xpInLevel(xp) {
   const lvl = level(xp);
-  if (lvl >= MAX_LEVEL) return XP_PER_LEVEL;
-  return xp - lvl * XP_PER_LEVEL;
+  if (lvl >= MAX_LEVEL) return LEVEL_THRESHOLDS[MAX_LEVEL - 1];
+  // CUMULATIVE_XP[lvl-1] = XP total pour atteindre le level lvl
+  return xp - CUMULATIVE_XP[lvl - 1];
+}
+
+function xpForLevel(xp) {
+  const lvl = level(xp);
+  if (lvl >= MAX_LEVEL) return LEVEL_THRESHOLDS[MAX_LEVEL - 1];
+  return LEVEL_THRESHOLDS[lvl - 1];
 }
 
 function isMaxLevel(xp) {
@@ -137,6 +197,29 @@ function addXp(state, amount) {
   return { state, leveled: newLevel > prevLevel, newLevel, prevLevel };
 }
 
+// ─── Anti-cheat ───────────────────────────────────────────────────────────────
+
+function getMachineKey() {
+  const fingerprint = `${os.hostname()}-${os.userInfo().username}`;
+  return crypto.createHash('sha256').update(fingerprint).digest('hex').slice(0, 32);
+}
+
+function signEntry(entry) {
+  const key = getMachineKey();
+  const sig = crypto.createHmac('sha256', key)
+    .update(JSON.stringify(entry))
+    .digest('hex')
+    .slice(0, 16);
+  return { ...entry, sig };
+}
+
+function checkPlausibility(state) {
+  if (!state.createdAt) return true;
+  const daysSince   = (Date.now() - state.createdAt) / 86_400_000;
+  const maxXpPerDay = 8000;
+  return state.totalXpEver <= Math.max(daysSince * maxXpPerDay, 10000);
+}
+
 // ─── Star rendering ───────────────────────────────────────────────────────────
 
 /**
@@ -148,7 +231,6 @@ function starRow(count, tier, indexOffset = 0) {
   for (let i = 0; i < count; i++) {
     stars.push(colorStar(tier, indexOffset + i));
   }
-  // padding pour centrer autour du pet
   const content = stars.join(' ');
   return content;
 }
@@ -188,8 +270,9 @@ function buildStarLayout(rebirths, tier) {
 
 function render(state) {
   const { xp, rebirths } = state;
-  const lvl  = level(xp);
-  const tier = getTier(rebirths);
+  const lvl      = level(xp);
+  const tier     = getTier(rebirths);
+  const petLines = getPetLines(state);
   const { topRows, botRows } = buildStarLayout(rebirths, tier);
 
   const INDENT = '  ';
@@ -200,7 +283,7 @@ function render(state) {
   if (topRows.length) lines.push('');
 
   // Pet
-  for (const pl of PET_LINES) lines.push(INDENT + pl);
+  for (const pl of petLines) lines.push(INDENT + pl);
 
   // Étoiles du dessous
   if (botRows.length) lines.push('');
@@ -217,9 +300,11 @@ function render(state) {
   if (isMaxLevel(xp)) {
     lines.push(`${INDENT}\x1b[33m✨ REBIRTH AVAILABLE  →  /buddy rebirth\x1b[0m`);
   } else {
-    const filled = Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 20);
-    const bar    = '\x1b[32m' + '█'.repeat(filled) + RESET + '░'.repeat(20 - filled);
-    lines.push(`${INDENT}XP  [${bar}]  ${xpInLevel(xp)}/${XP_PER_LEVEL}`);
+    const xpNow   = xpInLevel(xp);
+    const xpNeeded = xpForLevel(xp);
+    const filled  = Math.floor((xpNow / xpNeeded) * 20);
+    const bar     = '\x1b[32m' + '█'.repeat(filled) + RESET + '░'.repeat(20 - filled);
+    lines.push(`${INDENT}XP  [${bar}]  ${xpNow}/${xpNeeded}`);
   }
 
   lines.push('');
@@ -248,9 +333,10 @@ function render(state) {
 function renderInlineBlock(state) {
   const INDENT = '  ';
   const { xp, rebirths } = state;
-  const lvl  = level(xp);
-  const tier = getTier(rebirths);
-  const sym  = (tier && tier.symbol) || '★';
+  const lvl      = level(xp);
+  const tier     = getTier(rebirths);
+  const petLines = getPetLines(state);
+  const sym      = (tier && tier.symbol) || '★';
 
   const RING_MAX = 22;
   const filled   = Math.min(rebirths, RING_MAX);
@@ -263,10 +349,6 @@ function renderInlineBlock(state) {
     return `${c}${sym}${RESET} `;
   }
 
-  // Inner width = 14 chars (2 sp + 7 pet + 5 sp).
-  // Top/bot : 5 étoiles = 10 chars, centré dans 14 → 2 chars de marge chaque côté.
-  // Le tout est précédé de INDENT (2) + side star (2) pour les lignes latérales,
-  // et de INDENT (2) + 4 espaces pour les lignes top/bot.
   // Étoile 1 char (sans espace) pour les rangées top/bottom
   function T(pos) {
     if (pos >= filled) return ' ';
@@ -274,19 +356,14 @@ function renderInlineBlock(state) {
     return `${c}${sym}${RESET}`;
   }
 
-  // Layout (17 chars visuels par rangée latérale) :
-  //   side row : INDENT(2) + S(2) + inner(11) + S(2) = 17
-  //   pet  row : INDENT(2) + S(2) + 2sp + PET(7) + 2sp + S(2) = 17  ← centré
-  //   top/bot  : INDENT(2) + 3sp + T(1+sp)×5 + 3sp = 17              ← centré
-
   const lines = [''];
 
   lines.push(`${INDENT}   ${T(0)} ${T(1)} ${T(2)} ${T(3)} ${T(4)}   `);
   lines.push(`${INDENT}${S(21)}           ${S(5)}`);
-  lines.push(`${INDENT}${S(20)}  ${PET_LINES[0]}  ${S(6)}`);
-  lines.push(`${INDENT}${S(19)}  ${PET_LINES[1]}  ${S(7)}`);
-  lines.push(`${INDENT}${S(18)}  ${PET_LINES[2]}  ${S(8)}`);
-  lines.push(`${INDENT}${S(17)}  ${PET_LINES[3]}  ${S(9)}`);
+  lines.push(`${INDENT}${S(20)}  ${petLines[0]}  ${S(6)}`);
+  lines.push(`${INDENT}${S(19)}  ${petLines[1]}  ${S(7)}`);
+  lines.push(`${INDENT}${S(18)}  ${petLines[2]}  ${S(8)}`);
+  lines.push(`${INDENT}${S(17)}  ${petLines[3]}  ${S(9)}`);
   lines.push(`${INDENT}${S(16)}           ${S(10)}`);
   lines.push(`${INDENT}   ${T(15)} ${T(14)} ${T(13)} ${T(12)} ${T(11)}   `);
 
@@ -302,9 +379,11 @@ function renderInlineBlock(state) {
   if (isMaxLevel(xp)) {
     lines.push(`${INDENT}\x1b[33m✨ REBIRTH AVAILABLE  →  /buddy rebirth\x1b[0m`);
   } else {
-    const pct = Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 20);
-    const bar = '\x1b[32m' + '█'.repeat(pct) + RESET + '░'.repeat(20 - pct);
-    lines.push(`${INDENT}[${bar}]  ${xpInLevel(xp)}/${XP_PER_LEVEL} xp`);
+    const xpNow    = xpInLevel(xp);
+    const xpNeeded = xpForLevel(xp);
+    const pct      = Math.floor((xpNow / xpNeeded) * 20);
+    const bar      = '\x1b[32m' + '█'.repeat(pct) + RESET + '░'.repeat(20 - pct);
+    lines.push(`${INDENT}[${bar}]  ${xpNow}/${xpNeeded} xp`);
   }
 
   lines.push('');
@@ -316,8 +395,10 @@ function renderInlineBlock(state) {
 module.exports = {
   DATA_DIR, STATE_FILE, LOG_FILE,
   XP_TABLE, XP_SESSION_END, MAX_LEVEL,
+  LEVEL_THRESHOLDS, CUMULATIVE_XP,
   loadState, saveState, appendLog,
-  level, xpInLevel, isMaxLevel, addXp,
-  getTier, render, renderInlineBlock,
+  level, xpInLevel, xpForLevel, isMaxLevel, addXp,
+  getTier, getPetLines, render, renderInlineBlock,
+  getMachineKey, signEntry, checkPlausibility,
   RAINBOW, RESET,
 };

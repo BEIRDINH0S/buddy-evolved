@@ -58,11 +58,43 @@ function run(raw) {
 }
 
 function handleToolUse(state, event) {
-  const toolName = event.tool_name || '';
-  const xpAmount = XP_TABLE[toolName] ?? 0;
+  const toolName  = event.tool_name || '';
+  const toolInput = event.tool_input || {};
+  let xpAmount    = XP_TABLE[toolName] ?? 0;
   if (xpAmount === 0) return;
 
+  // Bonus fichiers test
+  if (['Write', 'Edit', 'MultiEdit'].includes(toolName)) {
+    const file = toolInput.file_path || toolInput.path || '';
+    if (/(\.(test|spec)\.[a-z]+$)|([\\/](test|spec)s?[\\/])|(__tests__)/.test(file)) {
+      xpAmount += 30;
+    }
+  }
+
+  // Bonus git commit avec "fix" ou "bug"
+  if (toolName === 'Bash') {
+    const cmd = (toolInput.command || '').toLowerCase();
+    if (cmd.includes('git commit') && (cmd.includes('fix') || cmd.includes('bug'))) {
+      xpAmount += 80;
+    }
+  }
+
+  // Tracking fichiers uniques dans la session
+  if (['Write', 'Edit', 'MultiEdit'].includes(toolName)) {
+    const file = toolInput.file_path || toolInput.path || '';
+    if (file) {
+      const sessionFiles = state.sessionFiles || [];
+      if (!sessionFiles.includes(file)) {
+        state.sessionFiles = [...sessionFiles, file];
+      }
+    }
+  }
+
   const { state: updated, leveled, newLevel } = addXp(state, xpAmount);
+
+  if (leveled) {
+    updated.lastLevelUpAt = Date.now();
+  }
 
   appendLog({ event: 'tool_use', tool: toolName, xp: xpAmount, level: newLevel });
   saveState(updated);
@@ -73,9 +105,21 @@ function handleToolUse(state, event) {
 }
 
 function handleStop(state, event) {
-  const { state: updated, leveled, newLevel } = addXp(state, XP_SESSION_END);
+  let xpAmount = XP_SESSION_END;
 
-  appendLog({ event: 'session_end', xp: XP_SESSION_END, level: newLevel });
+  // Bonus multi-fichiers
+  const sessionFiles = state.sessionFiles || [];
+  if (sessionFiles.length >= 4) xpAmount += 300; // tâche complexe multi-fichiers
+  else if (sessionFiles.length >= 2) xpAmount += 100;
+  state.sessionFiles = []; // reset
+
+  const { state: updated, leveled, newLevel } = addXp(state, xpAmount);
+
+  if (leveled) {
+    updated.lastLevelUpAt = Date.now();
+  }
+
+  appendLog({ event: 'session_end', xp: xpAmount, level: newLevel });
   saveState(updated);
 
   if (leveled) {
