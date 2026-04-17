@@ -227,32 +227,75 @@ function render(state) {
 }
 
 /**
- * Rendu inline pour /buddy (bloc compact dans la conversation).
+ * Rendu inline pour /buddy — Option B : pet entouré d'un anneau d'étoiles.
+ *
+ * L'anneau a 22 positions (clockwise depuis le haut-gauche) :
+ *   top  L→R  : 0-4   (5 pos)
+ *   right T→B : 5-10  (6 pos)
+ *   bot  R→L  : 11-15 (5 pos, affichés L→R comme 15,14,13,12,11)
+ *   left B→T  : 16-21 (6 pos, affichés T→B comme 21,20,19,18,17,16)
+ *
+ * Affichage par row :
+ *   top    :  S(0)  S(1)  S(2)  S(3)  S(4)
+ *   row 1  :  S(21)                   S(5)
+ *   pet[0] :  S(20)  .-.              S(6)
+ *   pet[1] :  S(19) (o.o)             S(7)
+ *   pet[2] :  S(18)  )|(              S(8)
+ *   pet[3] :  S(17) (_|_)             S(9)
+ *   row 6  :  S(16)                   S(10)
+ *   bot    :  S(15) S(14) S(13) S(12) S(11)
  */
 function renderInlineBlock(state) {
+  const INDENT = '  ';
   const { xp, rebirths } = state;
   const lvl  = level(xp);
   const tier = getTier(rebirths);
+  const sym  = (tier && tier.symbol) || '★';
 
-  const pct  = isMaxLevel(xp) ? 20 : Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 20);
-  const bar  = (isMaxLevel(xp) ? '\x1b[33m' : '\x1b[32m')
-             + '█'.repeat(pct) + RESET + '░'.repeat(20 - pct);
+  const RING_MAX = 22;
+  const filled   = Math.min(rebirths, RING_MAX);
+  const extra    = rebirths > RING_MAX ? rebirths - RING_MAX : 0;
+
+  // Retourne une étoile colorée (2 chars visuels) ou 2 espaces si vide
+  function S(pos) {
+    if (pos >= filled) return '  ';
+    const c = (tier && tier.color) || RAINBOW[pos % RAINBOW.length];
+    return `${c}${sym}${RESET} `;
+  }
+
+  // Inner width = 14 chars (2 sp + 7 pet + 5 sp).
+  // Top/bot : 5 étoiles = 10 chars, centré dans 14 → 2 chars de marge chaque côté.
+  // Le tout est précédé de INDENT (2) + side star (2) pour les lignes latérales,
+  // et de INDENT (2) + 4 espaces pour les lignes top/bot.
+  const lines = [''];
+
+  lines.push(`${INDENT}    ${S(0)}${S(1)}${S(2)}${S(3)}${S(4)}`);
+  lines.push(`${INDENT}${S(21)}              ${S(5)}`);
+  lines.push(`${INDENT}${S(20)}  ${PET_LINES[0]}     ${S(6)}`);
+  lines.push(`${INDENT}${S(19)}  ${PET_LINES[1]}     ${S(7)}`);
+  lines.push(`${INDENT}${S(18)}  ${PET_LINES[2]}     ${S(8)}`);
+  lines.push(`${INDENT}${S(17)}  ${PET_LINES[3]}     ${S(9)}`);
+  lines.push(`${INDENT}${S(16)}              ${S(10)}`);
+  lines.push(`${INDENT}    ${S(15)}${S(14)}${S(13)}${S(12)}${S(11)}`);
+
+  if (extra > 0) {
+    lines.push(`${INDENT}      \x1b[90m+${extra} étoiles\x1b[0m`);
+  }
+
+  lines.push('');
 
   const tierStr = tier ? ` · ${tier.color}${tier.name}${RESET}` : '';
-  const { topRows, botRows } = buildStarLayout(rebirths, tier);
+  lines.push(`${INDENT}\x1b[1mBuddy\x1b[0m  ·  Lv.\x1b[1m${lvl}\x1b[0m${tierStr}`);
 
-  const lines = [
-    '',
-    ...topRows.map(r => `  ${r}`),
-    ...PET_LINES.map(l => `  ${l}`),
-    ...botRows.map(r => `  ${r}`),
-    '',
-    `  \x1b[1mBuddy\x1b[0m  ·  Lv.\x1b[1m${lvl}\x1b[0m${tierStr}`,
-    `  [${bar}]  ${xpInLevel(xp)}/${XP_PER_LEVEL} xp`,
-    '',
-    ...(isMaxLevel(xp) ? [`  \x1b[33m✨ REBIRTH — /buddy rebirth\x1b[0m`, ''] : []),
-  ];
+  if (isMaxLevel(xp)) {
+    lines.push(`${INDENT}\x1b[33m✨ REBIRTH AVAILABLE  →  /buddy rebirth\x1b[0m`);
+  } else {
+    const pct = Math.floor((xpInLevel(xp) / XP_PER_LEVEL) * 20);
+    const bar = '\x1b[32m' + '█'.repeat(pct) + RESET + '░'.repeat(20 - pct);
+    lines.push(`${INDENT}[${bar}]  ${xpInLevel(xp)}/${XP_PER_LEVEL} xp`);
+  }
 
+  lines.push('');
   return lines.join('\n');
 }
 

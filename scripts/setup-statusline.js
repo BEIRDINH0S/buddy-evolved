@@ -2,9 +2,14 @@
 /**
  * setup-statusline.js — Configure Claude Code statusLine pour Buddy
  *
- * Modifie ~/.claude/settings.json pour pointer vers statusline.js.
- * Idempotent : ne ré-écrit que si la config est absente ou différente.
- * Peut être appelé en require() ou directement via node.
+ * Écrit la config dans :
+ *   - ~/.claude/settings.json  (global)
+ *   - <cwd>/.claude/settings.json  (projet courant)
+ *
+ * Sur Windows, Claude Code lance les commandes statusLine via Git Bash,
+ * donc on utilise le format de chemin Unix (/c/Users/...).
+ *
+ * Idempotent — ne ré-écrit que si la config est absente ou différente.
  */
 
 'use strict';
@@ -13,58 +18,74 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
-const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
+// ─── Chemin Unix (Git Bash) ───────────────────────────────────────────────────
 
-// CLAUDE_PLUGIN_ROOT est défini quand on tourne dans un contexte plugin.
-// Sinon on dérive depuis __dirname (scripts/ → racine du plugin).
+function toGitBashPath(p) {
+  // C:\Users\... → /c/Users/...
+  return p
+    .replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`)
+    .replace(/\\/g, '/');
+}
+
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT
   || path.resolve(__dirname, '..');
 
-// Chemin absolu vers statusline.js — sera écrit dans settings.json.
-// On normalise les backslashes pour la portabilité.
-const STATUSLINE_SCRIPT = path.join(PLUGIN_ROOT, 'scripts', 'statusline.js');
+const SCRIPT_UNIX = toGitBashPath(path.join(PLUGIN_ROOT, 'scripts', 'statusline.js'));
+const CMD = `node "${SCRIPT_UNIX}"`;
 
-function buildCommand() {
-  // Sur Windows les espaces dans le chemin nécessitent des guillemets.
-  const quoted = STATUSLINE_SCRIPT.includes(' ')
-    ? `"${STATUSLINE_SCRIPT}"`
-    : STATUSLINE_SCRIPT;
-  return `node ${quoted}`;
+const STATUS_LINE_CONFIG = {
+  type:            'command',
+  command:         CMD,
+  refreshInterval: 1,
+};
+
+// ─── Fichiers à mettre à jour ─────────────────────────────────────────────────
+
+function settingsFiles() {
+  const files = new Set();
+  files.add(path.join(os.homedir(), '.claude', 'settings.json'));
+
+  // Projet courant (là où l'utilisateur lance claude)
+  const proj = path.join(process.cwd(), '.claude', 'settings.json');
+  files.add(proj);
+
+  return [...files];
 }
 
-function loadSettings() {
-  try {
-    return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function load(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
+
+function write(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
 
 function setup() {
-  const cmd      = buildCommand();
-  const settings = loadSettings();
-
-  // Déjà configuré correctement → rien à faire
-  if (settings.statusLine?.command === cmd) return false;
-
-  settings.statusLine = { type: 'command', command: cmd, refreshInterval: 1 };
-
-  fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-  return true;
+  let changed = false;
+  for (const file of settingsFiles()) {
+    const s = load(file);
+    if (s.statusLine?.command === CMD) continue;
+    s.statusLine = STATUS_LINE_CONFIG;
+    write(file, s);
+    changed = true;
+  }
+  return changed;
 }
 
-// Point d'entrée : affiche un message quand lancé directement,
-// silencieux quand require()d depuis display.js.
 if (require.main === module) {
   const changed = setup();
   if (changed) {
     process.stdout.write(
       '  \x1b[32m✓\x1b[0m  statusLine configuré → Buddy apparaîtra sous la zone de saisie\n'
-      + '  \x1b[2m(Redémarre Claude Code si la barre n\'apparaît pas immédiatement)\x1b[0m\n'
+      + '  \x1b[2m(Redémarre Claude Code si la barre n\'apparaît pas)\x1b[0m\n'
     );
   } else {
-    process.stdout.write('  \x1b[2m(statusLine déjà configuré — rien à faire)\x1b[0m\n');
+    process.stdout.write('  \x1b[2m(statusLine déjà configuré)\x1b[0m\n');
   }
 }
 
