@@ -267,16 +267,28 @@ function renderInlineBlock(state) {
   // Top/bot : 5 étoiles = 10 chars, centré dans 14 → 2 chars de marge chaque côté.
   // Le tout est précédé de INDENT (2) + side star (2) pour les lignes latérales,
   // et de INDENT (2) + 4 espaces pour les lignes top/bot.
+  // Étoile 1 char (sans espace) pour les rangées top/bottom
+  function T(pos) {
+    if (pos >= filled) return ' ';
+    const c = (tier && tier.color) || RAINBOW[pos % RAINBOW.length];
+    return `${c}${sym}${RESET}`;
+  }
+
+  // Layout (17 chars visuels par rangée latérale) :
+  //   side row : INDENT(2) + S(2) + inner(11) + S(2) = 17
+  //   pet  row : INDENT(2) + S(2) + 2sp + PET(7) + 2sp + S(2) = 17  ← centré
+  //   top/bot  : INDENT(2) + 3sp + T(1+sp)×5 + 3sp = 17              ← centré
+
   const lines = [''];
 
-  lines.push(`${INDENT}    ${S(0)}${S(1)}${S(2)}${S(3)}${S(4)}`);
-  lines.push(`${INDENT}${S(21)}              ${S(5)}`);
-  lines.push(`${INDENT}${S(20)}  ${PET_LINES[0]}     ${S(6)}`);
-  lines.push(`${INDENT}${S(19)}  ${PET_LINES[1]}     ${S(7)}`);
-  lines.push(`${INDENT}${S(18)}  ${PET_LINES[2]}     ${S(8)}`);
-  lines.push(`${INDENT}${S(17)}  ${PET_LINES[3]}     ${S(9)}`);
-  lines.push(`${INDENT}${S(16)}              ${S(10)}`);
-  lines.push(`${INDENT}    ${S(15)}${S(14)}${S(13)}${S(12)}${S(11)}`);
+  lines.push(`${INDENT}   ${T(0)} ${T(1)} ${T(2)} ${T(3)} ${T(4)}   `);
+  lines.push(`${INDENT}${S(21)}           ${S(5)}`);
+  lines.push(`${INDENT}${S(20)}  ${PET_LINES[0]}  ${S(6)}`);
+  lines.push(`${INDENT}${S(19)}  ${PET_LINES[1]}  ${S(7)}`);
+  lines.push(`${INDENT}${S(18)}  ${PET_LINES[2]}  ${S(8)}`);
+  lines.push(`${INDENT}${S(17)}  ${PET_LINES[3]}  ${S(9)}`);
+  lines.push(`${INDENT}${S(16)}           ${S(10)}`);
+  lines.push(`${INDENT}   ${T(15)} ${T(14)} ${T(13)} ${T(12)} ${T(11)}   `);
 
   if (extra > 0) {
     lines.push(`${INDENT}      \x1b[90m+${extra} étoiles\x1b[0m`);
